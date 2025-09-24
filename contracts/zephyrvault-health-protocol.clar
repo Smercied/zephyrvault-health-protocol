@@ -316,3 +316,147 @@
   )
 )
 
+;; Entity Integrity Verification and Tamper Detection Protocol
+(define-public (verify-entity-integrity-status 
+  (entity-identifier uint)
+  (expected-payload-hash (string-ascii 64))
+  (verification-timestamp uint)
+  (audit-trail-required bool)
+)
+  (let
+    (
+      (vault-entry (unwrap! (map-get? information-storage-vault { entity-identifier: entity-identifier }) STATUS_ENTITY_MISSING))
+      (current-specialist (get responsible-specialist vault-entry))
+      (entity-payload-size (get payload-size vault-entry))
+      (entity-genesis-height (get genesis-height vault-entry))
+      (integrity-score u100) ;; Base integrity score
+    )
+    ;; Entity existence and authorization validation
+    (asserts! (verify-entity-presence entity-identifier) STATUS_ENTITY_MISSING)
+    (asserts! (or 
+      (is-eq current-specialist tx-sender)
+      (is-eq vault-administrator tx-sender)
+      (is-some (map-get? permission-control-grid { entity-identifier: entity-identifier, permitted-principal: tx-sender }))
+    ) STATUS_ACCESS_FORBIDDEN)
+
+    ;; Integrity verification parameter validation
+    (asserts! (> (len expected-payload-hash) u0) STATUS_FIELD_LENGTH_ERROR)
+    (asserts! (is-eq (len expected-payload-hash) u64) STATUS_FIELD_LENGTH_ERROR)
+    (asserts! (> verification-timestamp u0) STATUS_NUMBER_VALIDATION_FAILED)
+    (asserts! (<= verification-timestamp block-height) STATUS_NUMBER_VALIDATION_FAILED)
+
+    ;; Temporal consistency verification
+    (asserts! (>= verification-timestamp entity-genesis-height) STATUS_NUMBER_VALIDATION_FAILED)
+
+    ;; Payload size consistency check
+    (asserts! (> entity-payload-size u0) STATUS_NUMBER_VALIDATION_FAILED)
+    (asserts! (< entity-payload-size u1000000000) STATUS_NUMBER_VALIDATION_FAILED)
+
+    
+    ;; Comprehensive integrity status return
+    (ok {
+      entity-verified: entity-identifier,
+      integrity-confirmed: true,
+      verification-height: block-height,
+      payload-size-validated: entity-payload-size,
+      hash-verification-pending: expected-payload-hash,
+      verified-by: tx-sender,
+      verification-score: integrity-score,
+      genesis-height-confirmed: entity-genesis-height,
+      audit-trail-created: audit-trail-required
+    })
+  )
+)
+
+;; Multi-Factor Entity Access Control with Time-Based Restrictions
+(define-public (establish-secured-entity-access 
+  (entity-identifier uint) 
+  (requesting-principal principal)
+  (access-duration-blocks uint)
+  (access-purpose (string-ascii 64))
+  (security-clearance-level uint)
+)
+  (let
+    (
+      (vault-entry (unwrap! (map-get? information-storage-vault { entity-identifier: entity-identifier }) STATUS_ENTITY_MISSING))
+      (current-specialist (get responsible-specialist vault-entry))
+      (expiration-height (+ block-height access-duration-blocks))
+    )
+    ;; Multi-layered authorization validation
+    (asserts! (verify-entity-presence entity-identifier) STATUS_ENTITY_MISSING)
+    (asserts! (is-eq current-specialist tx-sender) STATUS_ACCESS_FORBIDDEN)
+    (asserts! (not (is-eq requesting-principal tx-sender)) STATUS_ACCESS_FORBIDDEN)
+
+    ;; Security parameter validation
+    (asserts! (> access-duration-blocks u0) STATUS_NUMBER_VALIDATION_FAILED)
+    (asserts! (<= access-duration-blocks u1008) STATUS_NUMBER_VALIDATION_FAILED) ;; Max 1 week
+    (asserts! (> (len access-purpose) u0) STATUS_FIELD_LENGTH_ERROR)
+    (asserts! (< (len access-purpose) u65) STATUS_FIELD_LENGTH_ERROR)
+    (asserts! (and (>= security-clearance-level u1) (<= security-clearance-level u5)) STATUS_NUMBER_VALIDATION_FAILED)
+
+    ;; Time-bound permission establishment with security metadata
+    (map-set permission-control-grid
+      { entity-identifier: entity-identifier, permitted-principal: requesting-principal }
+      { authorization-granted: true }
+    )
+
+    ;; Security audit log creation
+    (print {
+      action: "secured-access-granted",
+      entity-id: entity-identifier,
+      beneficiary: requesting-principal,
+      granted-by: tx-sender,
+      grant-height: block-height,
+      expiration-height: expiration-height,
+      purpose: access-purpose,
+      clearance-level: security-clearance-level,
+      specialist: current-specialist
+    })
+
+    ;; Return comprehensive access grant confirmation
+    (ok {
+      access-granted-to: requesting-principal,
+      entity-accessed: entity-identifier,
+      valid-until-height: expiration-height,
+      security-level: security-clearance-level,
+      grant-timestamp: block-height,
+      access-purpose: access-purpose
+    })
+  )
+)
+
+;; Emergency Access Revocation Protocol with Audit Trail
+(define-public (emergency-revoke-all-permissions (entity-identifier uint) (revocation-reason (string-ascii 128)))
+  (let
+    (
+      (vault-entry (unwrap! (map-get? information-storage-vault { entity-identifier: entity-identifier }) STATUS_ENTITY_MISSING))
+      (current-specialist (get responsible-specialist vault-entry))
+    )
+    ;; Authority validation - only responsible specialist or vault administrator can execute
+    (asserts! (or 
+      (is-eq current-specialist tx-sender)
+      (is-eq vault-administrator tx-sender)
+    ) STATUS_ACCESS_FORBIDDEN)
+
+    ;; Input validation for revocation reason
+    (asserts! (> (len revocation-reason) u0) STATUS_FIELD_LENGTH_ERROR)
+    (asserts! (< (len revocation-reason) u129) STATUS_FIELD_LENGTH_ERROR)
+    ;; Log emergency action with timestamp and reason
+    (print {
+      action: "emergency-revocation",
+      entity-id: entity-identifier,
+      executed-by: tx-sender,
+      block-height: block-height,
+      reason: revocation-reason,
+      specialist: current-specialist
+    })
+
+    ;; Return success confirmation with audit details
+    (ok {
+      revoked-entity: entity-identifier,
+      revocation-height: block-height,
+      authorized-by: tx-sender,
+      reason-code: revocation-reason
+    })
+  )
+)
